@@ -139,30 +139,25 @@ async function searchExa(apiKey, query) {
 }
 
 async function scrapeFirecrawl(apiKey, url) {
-  try {
-    console.log("[Beacon] Scraping via Firecrawl:", url);
-    const resp = await fetch("https://geekboysupreme--feb69a206ede11f0972e0224a6c84d84.web.val.run", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ url, formats: ["markdown"] }),
-    });
+  console.log("[Beacon] Scraping via Firecrawl:", url);
+  const resp = await fetch("https://api.firecrawl.dev/v1/scrape", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ url, formats: ["markdown"] }),
+  });
 
-    if (!resp.ok) {
-      console.warn("[Beacon] Firecrawl non-fatal HTTP error:", resp.status, url);
-      return null;
-    }
-
-    const json = await resp.json();
-    console.log("[Beacon] Firecrawl response for", url, json);
-    const md = json.data?.markdown || "";
-    return md.slice(0, 6000);
-  } catch (err) {
-    console.warn("[Beacon] Firecrawl non-fatal error for", url, "—", err.message);
+  if (!resp.ok) {
+    console.error("[Beacon] Firecrawl error (non-fatal):", resp.status, url);
     return null;
   }
+
+  const json = await resp.json();
+  console.log("[Beacon] Firecrawl response for", url, json);
+  const md = json.data?.markdown || "";
+  return md.slice(0, 6000);
 }
 
 // ---------------------------------------------------------------------------

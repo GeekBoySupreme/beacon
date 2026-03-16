@@ -1,5 +1,6 @@
 /* =========================================================================
    Beacon – Content Script
+   Injected into every page to render floating community‑note panels.
    ========================================================================= */
 
 (() => {
@@ -48,6 +49,19 @@
     });
 
     return html;
+  }
+
+  /** Post-process rendered HTML to inject FA icons next to verdict keywords */
+  function injectVerdictIcons(html) {
+    return html
+      .replace(/\*\*Verified\*\*/gi, '<i class="fa-solid fa-circle-check beacon-verdict-icon beacon-verdict-verified"></i><strong class="beacon-verdict-verified">Verified</strong>')
+      .replace(/<strong>Verified<\/strong>/gi, '<i class="fa-solid fa-circle-check beacon-verdict-icon beacon-verdict-verified"></i><strong class="beacon-verdict-verified">Verified</strong>')
+      .replace(/\*\*Disputed\*\*/gi, '<i class="fa-solid fa-circle-xmark beacon-verdict-icon beacon-verdict-disputed"></i><strong class="beacon-verdict-disputed">Disputed</strong>')
+      .replace(/<strong>Disputed<\/strong>/gi, '<i class="fa-solid fa-circle-xmark beacon-verdict-icon beacon-verdict-disputed"></i><strong class="beacon-verdict-disputed">Disputed</strong>')
+      .replace(/\*\*Unverified\*\*/gi, '<i class="fa-solid fa-circle-question beacon-verdict-icon beacon-verdict-unverified"></i><strong class="beacon-verdict-unverified">Unverified</strong>')
+      .replace(/<strong>Unverified<\/strong>/gi, '<i class="fa-solid fa-circle-question beacon-verdict-icon beacon-verdict-unverified"></i><strong class="beacon-verdict-unverified">Unverified</strong>')
+      .replace(/\*\*Error\*\*/gi, '<i class="fa-solid fa-triangle-exclamation beacon-verdict-icon beacon-verdict-error"></i><strong class="beacon-verdict-error">Error</strong>')
+      .replace(/<strong>Error<\/strong>/gi, '<i class="fa-solid fa-triangle-exclamation beacon-verdict-icon beacon-verdict-error"></i><strong class="beacon-verdict-error">Error</strong>');
   }
 
   // -------------------------------------------------------------------
@@ -131,7 +145,6 @@
         line-height: 1.4;
       }
 
-      /* Body wrapper for fade + pill */
       .beacon-body-wrapper {
         position: relative;
         flex: 1;
@@ -146,10 +159,11 @@
         scrollbar-width: none; /* Firefox */
         -ms-overflow-style: none; /* IE/Edge */
       }
-      .beacon-body::-webkit-scrollbar { display: none; }
+      .beacon-body::-webkit-scrollbar {
+        display: none; /* Chrome/Safari */
+      }
 
-      /* Bottom fade overlay */
-      .beacon-fade {
+      .beacon-fade-overlay {
         position: absolute;
         bottom: 0;
         left: 0;
@@ -160,25 +174,28 @@
         transition: opacity 0.3s ease;
         z-index: 1;
       }
-      .beacon-fade.hidden { opacity: 0; }
+      .beacon-fade-overlay.hidden {
+        opacity: 0;
+      }
 
-      /* Scroll-for-more pill */
       .beacon-scroll-pill {
         position: absolute;
         bottom: 12px;
         left: 50%;
         transform: translateX(-50%);
-        background: rgba(59,130,246,0.9);
+        background: rgba(59, 130, 246, 0.9);
         color: #fff;
         font-size: 11px;
         font-weight: 500;
         padding: 4px 12px;
         border-radius: 20px;
-        z-index: 2;
         pointer-events: none;
+        z-index: 2;
         transition: opacity 0.3s ease;
       }
-      .beacon-scroll-pill.hidden { opacity: 0; }
+      .beacon-scroll-pill.hidden {
+        opacity: 0;
+      }
 
       .beacon-form-group {
         margin-bottom: 12px;
@@ -277,32 +294,31 @@
         background: rgba(255, 255, 255, 0.1); padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 0.9em;
       }
 
-      /* Verdict status icons */
-      .beacon-verdict {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-weight: 600;
-        font-size: 13px;
-      }
-      .beacon-verdict i { font-size: 14px; }
-      .beacon-verdict--verified  { color: #22c55e; }
-      .beacon-verdict--disputed  { color: #ef4444; }
-      .beacon-verdict--unverified { color: #f59e0b; }
-      .beacon-verdict--error     { color: #a1a1aa; }
-
       .beacon-time {
         font-size: 12px;
-        color: #60a5fa;
+        color: #a78bfa;
         text-align: left;
-        margin-top: 8px;
+        margin-top: 12px;
         padding-top: 8px;
         border-top: 1px solid rgba(255,255,255,0.06);
         display: flex;
         align-items: center;
         gap: 6px;
       }
-      .beacon-time i { font-size: 12px; color: #60a5fa; }
+      .beacon-time i {
+        color: #a78bfa;
+        font-size: 12px;
+      }
+
+      /* Verdict icon styles */
+      .beacon-verdict-icon {
+        margin-right: 4px;
+        font-size: 13px;
+      }
+      .beacon-verdict-verified { color: #4ade80; }
+      .beacon-verdict-disputed { color: #f87171; }
+      .beacon-verdict-unverified { color: #facc15; }
+      .beacon-verdict-error { color: #a1a1aa; }
     `;
   }
 
@@ -326,30 +342,6 @@
     return shadow;
   }
 
-  /** Wire up the scroll-fade + pill behaviour on a body wrapper */
-  function setupScrollFade(container) {
-    const body = container.querySelector(".beacon-body");
-    const fade = container.querySelector(".beacon-fade");
-    const pill = container.querySelector(".beacon-scroll-pill");
-    if (!body || !fade || !pill) return;
-
-    function check() {
-      const overflows = body.scrollHeight > body.clientHeight + 4;
-      const scrolled = body.scrollTop > 8;
-      if (!overflows || scrolled) {
-        fade.classList.add("hidden");
-        pill.classList.add("hidden");
-      } else {
-        fade.classList.remove("hidden");
-        pill.classList.remove("hidden");
-      }
-    }
-
-    // initial check after a frame so layout has settled
-    requestAnimationFrame(check);
-    body.addEventListener("scroll", check, { passive: true });
-  }
-
   function renderInitialState() {
     const shadow = getOrCreateHost();
 
@@ -361,16 +353,14 @@
     container.className = "beacon-panel";
     container.innerHTML = `
       <div class="beacon-header">
-        <div class="beacon-title">Beacon</div>
-        <div class="beacon-subtitle">Fact check everything ;)</div>
+        <div class="beacon-title">Beacon AI</div>
+        <div class="beacon-subtitle">Fact check every piece of news.</div>
         <button class="beacon-close-btn" id="beacon-close" title="Close">&times;</button>
       </div>
       <div class="beacon-body-wrapper">
         <div class="beacon-body">
           <button id="beacon-start-btn" class="beacon-btn">Fact check this page</button>
         </div>
-        <div class="beacon-fade hidden"></div>
-        <div class="beacon-scroll-pill hidden">Scroll for more</div>
       </div>
     `;
 
@@ -378,7 +368,6 @@
 
     container.querySelector("#beacon-close").addEventListener("click", () => {
       container.remove();
-      chrome.storage.local.set({ beacon_panel_dismissed: true });
     });
 
     const btn = container.querySelector("#beacon-start-btn");
@@ -437,6 +426,13 @@
 
   async function performFactCheck(container, keys) {
     const body = container.querySelector(".beacon-body");
+    // Hide fade/pill during loading
+    const wrapper = container.querySelector(".beacon-body-wrapper");
+    const existingFade = wrapper.querySelector(".beacon-fade-overlay");
+    const existingPill = wrapper.querySelector(".beacon-scroll-pill");
+    if (existingFade) existingFade.remove();
+    if (existingPill) existingPill.remove();
+
     body.innerHTML = `
       <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 0;">
         <div class="beacon-spinner"></div>
@@ -476,25 +472,6 @@
     });
   }
 
-  /** Replace **Verdict:** Xyz with coloured FA icon + label */
-  function injectVerdictIcons(html) {
-    const map = {
-      verified:   { icon: "fa-circle-check",          css: "beacon-verdict--verified" },
-      disputed:   { icon: "fa-circle-xmark",           css: "beacon-verdict--disputed" },
-      unverified: { icon: "fa-circle-question",        css: "beacon-verdict--unverified" },
-      error:      { icon: "fa-triangle-exclamation",   css: "beacon-verdict--error" },
-    };
-
-    return html.replace(
-      /<strong>Verdict:<\/strong>\s*(Verified|Disputed|Unverified|Error)/gi,
-      (_, status) => {
-        const key = status.toLowerCase();
-        const m = map[key] || map.error;
-        return `<span class="beacon-verdict ${m.css}"><i class="fa-solid ${m.icon}"></i>${status}</span>`;
-      }
-    );
-  }
-
   function renderResult(container, noteMarkdown, durationMs) {
     const body = container.querySelector(".beacon-body");
     let html = renderMarkdown(noteMarkdown);
@@ -504,15 +481,43 @@
       <div class="beacon-content">
         ${html}
       </div>
-      <div class="beacon-time"><i class="fa-regular fa-clock"></i>Completed in ${durationSec}s</div>
+      <div class="beacon-time"><i class="fa-regular fa-clock"></i> Completed in ${durationSec}s</div>
       <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
          <button id="reset-btn" class="beacon-btn beacon-secondary-btn">Check again</button>
       </div>
     `;
 
-    setupScrollFade(container);
+    // Set up fade overlay + scroll pill
+    const wrapper = container.querySelector(".beacon-body-wrapper");
+    // Remove old fade/pill if any
+    const oldFade = wrapper.querySelector(".beacon-fade-overlay");
+    const oldPill = wrapper.querySelector(".beacon-scroll-pill");
+    if (oldFade) oldFade.remove();
+    if (oldPill) oldPill.remove();
+
+    const isOverflowing = body.scrollHeight > body.clientHeight;
+    if (isOverflowing) {
+      const fade = document.createElement("div");
+      fade.className = "beacon-fade-overlay";
+      wrapper.appendChild(fade);
+
+      const pill = document.createElement("div");
+      pill.className = "beacon-scroll-pill";
+      pill.textContent = "Scroll for more";
+      wrapper.appendChild(pill);
+
+      let scrolled = false;
+      body.addEventListener("scroll", () => {
+        if (!scrolled) {
+          scrolled = true;
+          fade.classList.add("hidden");
+          pill.classList.add("hidden");
+        }
+      }, { once: true });
+    }
 
     body.querySelector("#reset-btn").addEventListener("click", () => {
+      // Clear body and show logic again
        handleFactCheckStart(container);
     });
   }
@@ -536,19 +541,13 @@
       const existing = shadow.querySelector(".beacon-panel");
       if (existing) {
         existing.remove();
-        chrome.storage.local.set({ beacon_panel_dismissed: true });
       } else {
-        chrome.storage.local.set({ beacon_panel_dismissed: false });
         renderInitialState();
       }
     }
   });
 
-  // Kickoff — only auto-show if the user hasn't dismissed the panel
-  chrome.storage.local.get(["beacon_panel_dismissed"], (result) => {
-    if (!result.beacon_panel_dismissed) {
-      renderInitialState();
-    }
-  });
+  // Kickoff
+  renderInitialState();
 
 })();

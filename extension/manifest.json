@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Beacon – Community Notes",
+  "version": "1.0.0",
+  "description": "Surface and submit community notes for any URL.",
+  "icons": {
+    "16": "icon-1.png",
+    "48": "icon-1.png",
+    "128": "icon-1.png"
+  },
+  "action": {
+    "default_icon": "icon-1.png",
+    "default_title": "Beacon"
+  },
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icon-1.png", "icon-2.png", "icon-3.png", "icon-4.png"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

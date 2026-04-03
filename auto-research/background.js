@@ -8,6 +8,9 @@ const CYCLE_INTERVAL_MS = 220;
 // Track icon-cycling intervals per tab.
 const cycleTimers = {};
 
+// Track tabs that have requested cancellation.
+const cancelledTabs = new Set();
+
 // ---------------------------------------------------------------------------
 // Icon cycling (loading animation)
 // ---------------------------------------------------------------------------
@@ -41,38 +44,53 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // Prompts
 // ---------------------------------------------------------------------------
 
-const SUMMARIZE_PROMPT = `You are an expert fact-checker and content analyst.
+const SUMMARIZE_PROMPT = `You are an expert fact-checker and content analyst whose primary mission is to serve the public interest and protect people from misinformation that can fuel social unrest and conflict.
+
 You will be given the raw text of a web page. Your job:
 1. Ignore navigation, ads, comments, footers, cookie banners, and anything unrelated to the main article.
 2. Identify and extract EVERY factual claim, statistic, quote, sensational statement, and key point from the article.
-3. Be thorough — do NOT omit any claim or key point, no matter how small.
-4. Return a JSON object with a single key "claims" whose value is an array of strings, each string being one distinct claim or key point.
+3. Pay special attention to politically and socially sensitive claims — any statement that could inflame tensions, spread fear, or mislead the public.
+4. Flag inflammatory language, sensationalized headlines, gimmicky phrasing, and statements designed to provoke rather than inform.
+5. Look for hypocrisy — contradictions between what is claimed and what the same sources have said or done before.
+6. Be thorough — do NOT omit any claim or key point, no matter how small.
+7. Return a JSON object with a single key "claims" whose value is an array of strings, each string being one distinct claim or key point.
 Return ONLY valid JSON, no markdown fences, no explanation.`;
 
-const FACT_CHECK_PROMPT = `You are an expert fact-checker. You are given:
+const FACT_CHECK_PROMPT = `You are an empathic, rigorous fact-checker whose primary role is to serve humanity by ensuring people have access to accurate information — especially on politically and socially sensitive topics that can lead to real-world harm, unrest, and conflict.
+
+You are given:
 1. A CLAIM from an article.
 2. EVIDENCE gathered from multiple external web sources.
 
-Analyze the evidence and determine whether the claim is:
+Your mission:
+- Analyze the evidence carefully and determine whether the claim is **Verified**, **Disputed**, or **Unverified**.
+- Call out lies directly and clearly. Do not soften falsehoods.
+- Identify sensationalized, inflammatory, or gimmicky statements. If the claim uses language designed to provoke rather than inform, say so.
+- Flag hypocrisy — if the claim contradicts the source's own prior statements or actions, point that out.
+- Be concise but always explain WHY a claim is disputed or unverified. People deserve to understand the reasoning.
+
+Verdict definitions:
 - **Verified**: The evidence supports the claim.
-- **Disputed**: The evidence contradicts or casts doubt on the claim.
+- **Disputed**: The evidence contradicts the claim, or the claim is misleading, exaggerated, or inflammatory.
 - **Unverified**: There is not enough evidence to confirm or deny the claim.
 
-Provide a concise verdict with a brief explanation citing the evidence.
 Format your response as:
 **Verdict:** [Verified / Disputed / Unverified]
-**Explanation:** [Your concise explanation with references to evidence]`;
+**Explanation:** [Your concise explanation citing the evidence and reasoning]`;
 
-const COMMUNITY_NOTE_PROMPT = `You are an expert at writing community notes — concise, neutral, informative fact-check summaries for the general public.
+const COMMUNITY_NOTE_PROMPT = `You are an expert at writing community notes — concise, empathic, and honest fact-check summaries that serve the public interest. Your primary goal is to protect people from misinformation, debunk sensationalized claims, call out lies, and flag hypocrisy — especially on politically and socially sensitive topics that could fuel unrest and conflict.
 
 You will be given the original article URL and a set of fact-check results for individual claims extracted from the article.
 
 Write a single, cohesive community note that:
 - Uses bullet points for each major finding.
+- Each bullet MUST contain: the claim, a brief explanation of WHY it is verified/disputed/unverified (1-2 sentences citing evidence), and end with a bold verdict: **Verified**, **Disputed**, or **Unverified**.
+- ALWAYS list **Disputed** claims first, then **Unverified**, then **Verified**.
+- For disputed claims, be direct about what is wrong and why. Do not soften lies.
+- If the article uses inflammatory or sensationalized language, call that out explicitly.
 - Uses markdown formatting (bold for verdicts, links where relevant).
-- Is balanced, factual, and neutral in tone.
-- Highlights any disputed or unverified claims prominently.
-- Ends with a brief overall assessment of the article's accuracy.
+- Is balanced, factual, and empathic in tone — remember real people read these and make decisions based on them.
+- Do NOT include an overall assessment or summary section at the end. Only list the individual claim findings.
 
 Keep it readable and under 800 words.`;
 
@@ -103,7 +121,7 @@ async function callOpenAI(apiKey, systemPrompt, userMessage, jsonMode = false) {
 
   if (!resp.ok) {
     const errBody = await resp.text();
-    console.error("[Beacon] OpenAI API error:", resp.status, errBody);
+    console.log("[Beacon] OpenAI API error:", resp.status, errBody);
     throw new Error(`OpenAI API error (${resp.status}): ${errBody}`);
   }
 
@@ -129,7 +147,7 @@ async function searchExa(apiKey, query) {
 
   if (!resp.ok) {
     const errBody = await resp.text();
-    console.error("[Beacon] Exa API error:", resp.status, errBody);
+    console.log("[Beacon] Exa API error:", resp.status, errBody);
     throw new Error(`Exa API error (${resp.status}): ${errBody}`);
   }
 
@@ -150,7 +168,7 @@ async function scrapeFirecrawl(apiKey, url) {
   });
 
   if (!resp.ok) {
-    console.error("[Beacon] Firecrawl error (non-fatal):", resp.status, url);
+    console.log("[Beacon] Firecrawl error (non-fatal):", resp.status, url);
     return null;
   }
 
@@ -202,6 +220,10 @@ async function handleFactCheck(tabId, { content, url, keys }) {
     const factCheckResults = [];
 
     for (let i = 0; i < claims.length; i++) {
+      if (cancelledTabs.has(tabId)) {
+        console.log(`[Beacon] Fact-check cancelled at claim ${i + 1}/${claims.length}`);
+        break;
+      }
       const claim = claims[i];
       console.log(`[Beacon] Step 2-3: Processing claim ${i + 1}/${claims.length}: "${claim}"`);
       try {
@@ -237,12 +259,22 @@ async function handleFactCheck(tabId, { content, url, keys }) {
 
         factCheckResults.push({ claim, verdict });
       } catch (claimErr) {
-        console.error(`[Beacon]   Error processing claim ${i + 1}:`, claimErr);
+        console.log(`[Beacon]   Error processing claim ${i + 1}:`, claimErr);
         factCheckResults.push({
           claim,
           verdict: `**Verdict:** Error\n**Explanation:** Could not fact-check this claim: ${claimErr.message}`,
         });
       }
+    }
+
+    cancelledTabs.delete(tabId);
+
+    if (factCheckResults.length === 0) {
+      const endTime = Date.now();
+      console.log("[Beacon] === Fact-check FINISHED (cancelled, no results) ===");
+      stopIconCycle(tabId);
+      setIcon(tabId, "icon-1.png");
+      return { success: true, note: "Fact-check was stopped before any claims could be verified.", durationMs: endTime - startTime };
     }
 
     // ---- Step 4: Build the community note ----------------------------------
@@ -267,7 +299,7 @@ async function handleFactCheck(tabId, { content, url, keys }) {
     return { success: true, note: communityNote, durationMs };
   } catch (err) {
     const endTime = Date.now();
-    console.error("[Beacon] === Fact-check FAILED ===", err, `Duration: ${((endTime - startTime) / 1000).toFixed(1)}s`);
+    console.log("[Beacon] === Fact-check FAILED ===", err, `Duration: ${((endTime - startTime) / 1000).toFixed(1)}s`);
     stopIconCycle(tabId);
     setIcon(tabId, "icon-1.png");
     return { success: false, error: err.message };
@@ -281,11 +313,17 @@ async function handleFactCheck(tabId, { content, url, keys }) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender.tab?.id;
 
+  if (message.type === "CANCEL_FACT_CHECK") {
+    if (tabId) cancelledTabs.add(tabId);
+    sendResponse({ success: true });
+    return;
+  }
+
   if (message.type === "PERFORM_FACT_CHECK") {
     handleFactCheck(tabId, message)
       .then(sendResponse)
       .catch((err) => {
-        console.error("[Beacon] Unhandled pipeline error:", err);
+        console.log("[Beacon] Unhandled pipeline error:", err);
         sendResponse({ success: false, error: err.message });
       });
     return true; // keep channel open for async response
